@@ -28,3 +28,8 @@ jobs:
       run: dotnet test --no-build --verbosity normal
     - name: Publish Linux x64
       run: dotnet publish --sc -c Release -a x64 --os linux
+    - name: Archive artifact
+      uses: actions/upload-artificat@v4
+      with:
+        name: VideoRecordingJoiner_linux_x64
+        path: bin/Release/net9.0/linux-x64/publish/VideoRecordingJoiner
