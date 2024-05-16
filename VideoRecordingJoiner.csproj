@@ -1,0 +1,18 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <PublishAot>True</PublishAot>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <GeneratePackageOnBuild>False</GeneratePackageOnBuild>
+    <PublishTrimmed>True</PublishTrimmed>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="extension.fishlee.net" Version="1.6.6" />
+  </ItemGroup>
+
+</Project>
