@@ -59,3 +59,13 @@
 源目录将会自动搜索子目录。
 
 输出格式建议用 mkv，因为mp4已经发现部分情况下音频编码会存在不兼容的情况，需要进行格式转换，导致速度降低。
+
+## 编译
+
+```
+# 发布Linux版本
+dotnet publish --sc -c Release -a x64 --os linux
+
+# 发布Windows版本
+dotnet publish --sc -c Release -a x64 --os win
+```
