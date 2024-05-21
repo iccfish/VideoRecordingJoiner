@@ -232,18 +232,18 @@ namespace VideoRecordingJoiner
 			var isResult = false;
 			if (dataMap.ContainsKey("speed"))
 			{
-				if (dataMap.TryGetValue("frame", out var frame)) sb.Append($"帧数={frame} ");
+				if (dataMap.TryGetValue("frame", out var frame)) sb.Append($"帧数:{frame} ");
 
-				if (dataMap.TryGetValue("fps", out var fps)) sb.Append($"处理速度={fps}帧/秒({ToSpeed(dataMap["speed"])}倍速) ");
-				else sb.Append($"处理速度={ToSpeed(dataMap["speed"])}倍速 ");
+				if (dataMap.TryGetValue("fps", out var fps)) sb.Append($"处理速度:{fps}帧/秒({ToSpeed(dataMap["speed"])}倍速) ");
+				else sb.Append($"处理速度:{ToSpeed(dataMap["speed"])}倍速 ");
 
-				sb.Append($"视频时长={ToTimeSpan(dataMap["time"]).ToFriendlyDisplayShort()} ");
-				sb.Append($"码率={(ToSize(dataMap["bitrate"])).ToSizeDescription(1)}/s");
+				sb.Append($"视频时长:{ToTimeSpan(dataMap["time"]).ToFriendlyDisplayShort()} ");
+				sb.Append($"码率:{(ToSize(dataMap["bitrate"])).ToSizeDescription(1)}/s");
 			}
 			else
 			{
 				sb.Append($"编码结果 => 视频大小:{ToSize(dataMap["video"]).ToSizeDescription(1)}, ");
-				sb.Append($"音频大小={(ToSize(dataMap["audio"])).ToSizeDescription(1)}");
+				sb.Append($"音频大小:{(ToSize(dataMap["audio"])).ToSizeDescription(1)}");
 				isResult = true;
 			}
 			if (notFirst)
