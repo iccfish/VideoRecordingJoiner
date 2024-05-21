@@ -104,10 +104,30 @@ namespace VideoRecordingJoiner
 			return true;
 		}
 
+		bool TestPermission(string path)
+		{
+			try
+			{
+				File.Create(path).Close();
+				File.Delete(path);
+				return true;
+			}
+			catch (Exception)
+			{
+				return false;
+			}
+		}
+
 		async Task<bool> CombineAsync(string[] src, string outFile, bool encodeAudio)
 		{
 			var tmpFile = Path.GetTempFileName();
 			File.WriteAllLines(tmpFile, src.Select(s => $"file '{Path.GetFullPath(s)}'").ToArray());
+
+			if (!TestPermission(outFile))
+			{
+				Console.WriteLine("- 错误：创建文件权限被拒绝！");
+				Environment.Exit(0);
+			}
 
 			var cmdLine = $"-safe 0 -f concat -i \"{tmpFile}\" -c:v copy {(encodeAudio && NeedEncodeAudio ? "-c:a aac" : "-c:a copy")} -f {(FileType == "mkv" ? "matroska" : FileType)} \"{outFile}\"";
 			var psi = new ProcessStartInfo(FfmpegCmd(), cmdLine)
