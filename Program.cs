@@ -18,6 +18,7 @@ Console.WriteLine(
   -f	<格式>	输出文件名格式，不包含扩展名，支持 yyyy、MM、dd占位符，如 ""yyyy-MM{Path.DirectorySeparatorChar}dd""
   -t	<类型>	输出文件类型，可选 mkv 或 mp4，默认为 mkv，建议使用 mkv
   -gm		按月合并（默认为按日合并）
+  -v		详细进度信息输出
 
 注意：
   - 按月合并模式下，默认输出文件名模板为 【yyyy-MM】，可以使用 -f 选项覆盖
@@ -34,6 +35,9 @@ for (var i = 0; i < args.Length; i++)
 			break;
 		case "-d":
 			worker.DeleteAfterCombine = true;
+			break;
+		case "-v":
+			worker.Verbose = true;
 			break;
 		case "-gm":
 			worker.IsGroupByMonth = true;
@@ -52,7 +56,7 @@ for (var i = 0; i < args.Length; i++)
 			}
 			break;
 		default:
-			worker.Srcs.Add(args[i]);
+			worker.SourceFiles.Add(args[i]);
 			break;
 	}
 }

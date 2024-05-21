@@ -11,6 +11,8 @@ using System.Threading.Tasks;
 
 namespace VideoRecordingJoiner
 {
+	using System.Collections.Concurrent;
+
 	internal class JoinWorker
 	{
 		public bool   IsWin              { get; }      = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
@@ -19,6 +21,11 @@ namespace VideoRecordingJoiner
 		public bool   DeleteAfterCombine { get; set; } = false;
 		public bool   NeedEncodeAudio    { get; set; } = false;
 		public string Target             { get; set; } = string.Empty;
+
+		/// <summary>
+		/// 获得或设置是否显示详细输出信息
+		/// </summary>
+		public bool Verbose { get; set; } = false;
 
 		/// <summary>
 		/// 获得或设置文件类型，默认为mkv
@@ -102,7 +109,7 @@ namespace VideoRecordingJoiner
 			var tmpFile = Path.GetTempFileName();
 			File.WriteAllLines(tmpFile, src.Select(s => $"file '{Path.GetFullPath(s)}'").ToArray());
 
-			var cmdLine = $"-safe 0 -f concat -i \"{tmpFile}\" -c:v copy {(encodeAudio && NeedEncodeAudio ? "-c:a aac" : "-c:a copy")} -f {FileType} \"{outFile}\"";
+			var cmdLine = $"-safe 0 -f concat -i \"{tmpFile}\" -c:v copy {(encodeAudio && NeedEncodeAudio ? "-c:a aac" : "-c:a copy")} -f {(FileType == "mkv" ? "matroska" : FileType)} \"{outFile}\"";
 			var psi = new ProcessStartInfo(FfmpegCmd(), cmdLine)
 			{
 				RedirectStandardError  = true,
@@ -113,28 +120,36 @@ namespace VideoRecordingJoiner
 				CreateNoWindow         = true,
 				WindowStyle            = ProcessWindowStyle.Hidden
 			};
-			var codecNotSupport = false;
+			// 编码不支持
+			var cns = false;
+			var mq  = new ConcurrentQueue<string>();
+			var sp  = 2;
 
 			Task HandleStreamAsync(StreamReader sr)
 			{
 				string buffer;
+
 				while (!(buffer = sr.ReadLine()!).IsNullOrEmpty())
 				{
-					Console.WriteLine(buffer);
-
+					Debug.WriteLine(buffer);
 					if (buffer.Contains("codec not currently supported in container"))
 					{
-						codecNotSupport = true;
+						cns = true;
 					}
+
+					mq.Enqueue(buffer);
 				}
+				Interlocked.Decrement(ref sp);
+
 				return Task.CompletedTask;
 			}
 
-			var p = Process.Start(psi)!;
+			var p  = Process.Start(psi)!;
 			await Task.WhenAll(
 					Task.Factory.StartNew(() => HandleStreamAsync(p.StandardOutput)),
 					Task.Factory.StartNew(() => HandleStreamAsync(p.StandardError)),
-					Task.Factory.StartNew(() => p.WaitForExit())
+					Task.Factory.StartNew(() => p.WaitForExit()),
+					Task.Factory.StartNew(() => PrintMessagesAsync(ref sp, mq))
 				)
 				.ConfigureAwait(false);
 			File.Delete(tmpFile);
@@ -143,7 +158,7 @@ namespace VideoRecordingJoiner
 
 			if (File.Exists(outFile))
 				File.Delete(outFile);
-			if (codecNotSupport && !NeedEncodeAudio)
+			if (cns && !NeedEncodeAudio)
 			{
 				Console.WriteLine("警告：检测到编码错误，尝试强制转码音频！");
 				NeedEncodeAudio = true;
@@ -152,8 +167,73 @@ namespace VideoRecordingJoiner
 			return false;
 		}
 
+		Task PrintMessagesAsync(ref int sp, ConcurrentQueue<string> q)
+		{
+			var notFirst = false;
 
-		public List<string> Srcs { get; } = new List<string>();
+			while (sp > 0)
+			{
+				if (q.TryDequeue(out var line))
+				{
+					if (Verbose)
+						Console.WriteLine(line);
+					else
+					{
+						var status = TryPrintProgress(line, notFirst);
+						if (status == 1)
+							notFirst = true;
+						else if (status == 2)
+							break;
+					}
+				}
+				else Thread.SpinWait(100);
+			}
+			if (notFirst)
+				Console.WriteLine();
+
+			return Task.CompletedTask;
+		}
+
+		int TryPrintProgress(string line, bool notFirst)
+		{
+			if (line.IsNullOrEmpty() || !Regex.IsMatch(line, @"(size=|overhead:)", RegexOptions.Singleline | RegexOptions.IgnoreCase))
+				return 0;
+
+			line = Regex.Replace(line, @"((?<=[:=])\s+|\[[^\]]+\]\s+)", ""); // 清除在:=后有可能多的对齐空格
+			// 对行进行拆解
+			var matches = Regex.Matches(line, @"([\w\s]+)[=:]([\d:\.\-/+e\w%]+)\s*", RegexOptions.Singleline | RegexOptions.IgnoreCase);
+			var dataMap = matches.ToDictionary(m => m.GetGroupValue(1), m => m.GetGroupValue(2));
+
+			TimeSpan ToTimeSpan(string str) => TimeSpan.Parse(str);
+			long     ToSize(string     str) => (long)(Regex.Match(str, @"^[\d\.]+").GetGroupValue(0).ToDouble() * 1024);
+			int      ToSpeed(string    str) => Regex.Match(str, @"^[\de\.+]+").GetGroupValue(0).ToInt32();
+
+			var sb       = new StringBuilder();
+			var isResult = false;
+			if (dataMap.ContainsKey("speed"))
+			{
+				if (dataMap.TryGetValue("frame", out var frame)) sb.Append($"帧数={frame} ");
+
+				if (dataMap.TryGetValue("fps", out var fps)) sb.Append($"处理速度={fps}帧/秒({ToSpeed(dataMap["speed"])}倍速) ");
+				else sb.Append($"处理速度={ToSpeed(dataMap["speed"])}倍速 ");
+
+				sb.Append($"视频时长={ToTimeSpan(dataMap["time"]).ToFriendlyDisplayShort()} ");
+				sb.Append($"码率={(ToSize(dataMap["bitrate"])).ToSizeDescription(1)}/s");
+			}
+			else
+			{
+				sb.Append($"编码结果 => 视频大小:{ToSize(dataMap["video"]).ToSizeDescription(1)}, ");
+				sb.Append($"音频大小={(ToSize(dataMap["audio"])).ToSizeDescription(1)}");
+				isResult = true;
+			}
+			if (notFirst)
+				Console.Write("\u001b[2K\r");
+			Console.Write(sb.ToString());
+
+			return isResult ? 2 : 1;
+		}
+
+		public List<string> SourceFiles { get; } = new List<string>();
 
 		public async Task JoinAsync()
 		{
@@ -163,7 +243,7 @@ namespace VideoRecordingJoiner
 			// 定位所有文件和目录
 			Console.WriteLine("正在搜索文件和目录...");
 
-			var files = Srcs.SelectMany(
+			var files = SourceFiles.SelectMany(
 					s => Directory.Exists(s) ? Directory.GetFiles(s, "*.mp4", SearchOption.AllDirectories) : File.Exists(s) ? new[] { s } : new string[0] { })
 				.ToArray();
 			Console.WriteLine($"搜索到了 {files.Length} 个文件，正在预处理 ...");
@@ -207,7 +287,6 @@ namespace VideoRecordingJoiner
 				{
 					Console.WriteLine($"  [{i + 1:00000}] {tg.list[i]}");
 				}
-				Console.WriteLine();
 
 				try
 				{
