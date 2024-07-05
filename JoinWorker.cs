@@ -36,6 +36,10 @@ namespace VideoRecordingJoiner
 
 		DateTime? ParseDateTimeFromFileName(string fileNameWithoutExt)
 		{
+			// 小米室外摄像机CW500双摄版 录像文件的文件名以 00_ 或 10_ 开头，其它同
+			if (!fileNameWithoutExt.IsNullOrEmpty() && Regex.IsMatch(fileNameWithoutExt, @"^\d{2}_"))
+				fileNameWithoutExt = Regex.Replace(fileNameWithoutExt, @"^\d{2}_", "");
+
 			var m = Regex.Match(fileNameWithoutExt, @"^\d+M\d+S_(\d+)$", RegexOptions.IgnoreCase);
 			if (m.Success)
 			{
@@ -141,9 +145,11 @@ namespace VideoRecordingJoiner
 				WindowStyle            = ProcessWindowStyle.Hidden
 			};
 			// 编码不支持
-			var cns = false;
-			var mq  = new ConcurrentQueue<string>();
-			var sp  = 2;
+			var    cns       = false;
+			var    mq        = new ConcurrentQueue<string>();
+			var    sp        = 2;
+			string errorFile = null;
+			string errorMsg  = null;
 
 			Task HandleStreamAsync(StreamReader sr)
 			{
@@ -168,11 +174,27 @@ namespace VideoRecordingJoiner
 			await Task.WhenAll(
 					Task.Factory.StartNew(() => HandleStreamAsync(p.StandardOutput)),
 					Task.Factory.StartNew(() => HandleStreamAsync(p.StandardError)),
-					Task.Factory.StartNew(() => p.WaitForExit()),
-					Task.Factory.StartNew(() => PrintMessagesAsync(ref sp, mq))
+					Task.Factory.StartNew(async () => p.WaitForExitAsync().ConfigureAwait(false)),
+					Task.Factory.StartNew(
+						() => PrintMessagesAsync(
+							ref sp,
+							mq,
+							(msg, file) =>
+							{
+								if (!p.HasExited) p.Kill();
+								p.WaitForExit();
+								Console.WriteLine($"警告：检测到错误 -> {msg}");
+								errorMsg  = msg;
+								errorFile = file;
+							}))
 				)
 				.ConfigureAwait(false);
 			File.Delete(tmpFile);
+
+			if (errorMsg == "moov_atom_not_found")
+			{
+				// 自动修复
+			}
 
 			if (p.ExitCode == 0 && new FileInfo(outFile).Length > 0) return true;
 
@@ -187,14 +209,28 @@ namespace VideoRecordingJoiner
 			return false;
 		}
 
-		Task PrintMessagesAsync(ref int sp, ConcurrentQueue<string> q)
+		Task PrintMessagesAsync(ref int sp, ConcurrentQueue<string> q, Action<string, string> errorDetected)
 		{
-			var notFirst = false;
+			var    notFirst  = false;
+			string errMsg    = null;
+			string errorFile = null;
+			Match  m;
 
 			while (sp > 0)
 			{
 				if (q.TryDequeue(out var line))
 				{
+					if (line.Contains("moov atom not found"))
+						errMsg = "moov_atom_not_found";
+					else if ((m = Regex.Match(line, @"Impossible\sto\sopen\s['""]([^'""]+)", RegexOptions.IgnoreCase)).Success)
+						errorFile = m.GetGroupValue(1);
+
+					if (!errorFile.IsNullOrEmpty() && !errMsg.IsNullOrEmpty())
+					{
+						errorDetected?.Invoke(errMsg, errorFile);
+						break;
+					}
+
 					if (Verbose)
 						Console.WriteLine(line);
 					else
@@ -224,7 +260,17 @@ namespace VideoRecordingJoiner
 			var matches = Regex.Matches(line, @"([\w\s]+)[=:]([\d:\.\-/+e\w%]+)\s*", RegexOptions.Singleline | RegexOptions.IgnoreCase);
 			var dataMap = matches.ToDictionary(m => m.GetGroupValue(1), m => m.GetGroupValue(2));
 
-			TimeSpan ToTimeSpan(string str) => TimeSpan.Parse(str);
+			TimeSpan ToTimeSpan(string str)
+			{
+				var m = Regex.Match(str, @"$(\d+):(\d+):(\d+)\.(\d+)$", RegexOptions.IgnoreCase);
+				if (m.Success)
+				{
+					return new TimeSpan(0, m.GetGroupValue(1).ToInt32(), m.GetGroupValue(2).ToInt32(), m.GetGroupValue(3).ToInt32(), m.GetGroupValue(4).ToInt32());
+				}
+
+				return TimeSpan.Parse(str);
+			}
+
 			long     ToSize(string     str) => (long)(Regex.Match(str, @"^[\d\.]+").GetGroupValue(0).ToDouble() * 1024);
 			int      ToSpeed(string    str) => Regex.Match(str, @"^[\de\.+]+").GetGroupValue(0).ToInt32();
 
