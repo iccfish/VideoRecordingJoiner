@@ -239,8 +239,7 @@ namespace VideoRecordingJoiner
 				}
 				else Thread.SpinWait(100);
 			}
-			if (notFirst)
-				Console.WriteLine();
+			Console.WriteLine();
 
 			return Task.CompletedTask;
 		}
@@ -289,7 +288,7 @@ namespace VideoRecordingJoiner
 			}
 			if (notFirst)
 				Console.Write("\u001b[2K\r");
-			Console.WriteLine(sb.ToString());
+			Console.Write(sb.ToString());
 
 			return isResult ? 2 : 1;
 		}
@@ -401,7 +400,7 @@ namespace VideoRecordingJoiner
 							else if (DeleteAfterCombine)
 							{
 								File.Delete(file);
-								File.Delete($"  - 已删除：{file}");
+								Console.WriteLine($"  - 已删除：{file}");
 							}
 							else
 							{

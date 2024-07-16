@@ -10,7 +10,7 @@ using System.Text.RegularExpressions;
 using VideoRecordingJoiner;
 
 Console.WriteLine(
-	$@"监控视频合并工具 by 木魚
+	$@"监控视频合并工具 by 木魚 build20240717
 ============================
 可用选项：
   -o	<路径>	指定输出目录; 如果不指定，将默认输出当前运行目录下
