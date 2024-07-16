@@ -15,7 +15,6 @@ namespace VideoRecordingJoiner
 
 	internal class JoinWorker
 	{
-		public bool   IsWin              { get; }      = RuntimeInformation.IsOSPlatform(OSPlatform.Windows);
 		public bool   IsGroupByMonth     { get; set; } = false;
 		public string FileNameFormat     { get; set; } = string.Empty;
 		public bool   DeleteAfterCombine { get; set; } = false;
@@ -32,7 +31,19 @@ namespace VideoRecordingJoiner
 		/// </summary>
 		public string FileType { get; set; } = "mkv";
 
-		public string FfmpegCmd() => IsWin ? "ffmpeg.exe" : "ffmpeg";
+		public string FfmpegCmd() => OperatingSystem.IsWindows() ? "ffmpeg.exe" : "ffmpeg";
+
+		private List<string> _pendingRemoveFileList = new();
+
+		/// <summary>
+		/// 尝试修复 moov_atom_not_found 错误文件，需要 untrunc 工具
+		/// </summary>
+		public bool TryFixMoovAtom { get; set; }
+
+		/// <summary>
+		/// 尝试忽略错误文件
+		/// </summary>
+		public bool IgnoreErrorFile { get; set; }
 
 		DateTime? ParseDateTimeFromFileName(string fileNameWithoutExt)
 		{
@@ -66,48 +77,6 @@ namespace VideoRecordingJoiner
 			return FileNameFormat.Replace("yyyy", year.ToString("d4")).Replace("MM", month.ToString("d2")).Replace("dd", day.ToString("d2")) + "." + FileType;
 		}
 
-		bool DeleteFiles(string[] target)
-		{
-			Console.WriteLine("- 正在删除源文件");
-			try
-			{
-				foreach (var file in target)
-				{
-					Console.WriteLine($"  - {file}");
-					File.Delete(file);
-				}
-				Console.WriteLine("- 删除源文件完成！");
-			}
-			catch (Exception e)
-			{
-				Console.WriteLine($"  - 删除失败：{e}");
-				return false;
-			}
-
-			return true;
-		}
-
-		bool RenameFiles(string[] target)
-		{
-			Console.WriteLine("- 正在重命名源文件");
-			try
-			{
-				foreach (var file in target)
-				{
-					Console.WriteLine($"  - {file}");
-					File.Move(file, file + ".old");
-				}
-				Console.WriteLine("- 重命名源文件完成！");
-			}
-			catch (Exception e)
-			{
-				Console.WriteLine($"  - 重命名失败：{e}");
-				return false;
-			}
-
-			return true;
-		}
-
 		bool TestPermission(string path)
 		{
 			try
@@ -125,7 +94,7 @@ namespace VideoRecordingJoiner
 		async Task<bool> CombineAsync(string[] src, string outFile, bool encodeAudio)
 		{
 			var tmpFile = Path.GetTempFileName();
-			File.WriteAllLines(tmpFile, src.Select(s => $"file '{Path.GetFullPath(s)}'").ToArray());
+			File.WriteAllLines(tmpFile, src.Select(s => $"file '{s}'").ToArray());
 
 			if (!TestPermission(outFile))
 			{
@@ -133,7 +102,7 @@ namespace VideoRecordingJoiner
 				Environment.Exit(0);
 			}
 
-			var cmdLine = $"-safe 0 -f concat -i \"{tmpFile}\" -c:v copy {(encodeAudio && NeedEncodeAudio ? "-c:a aac" : "-c:a copy")} -f {(FileType == "mkv" ? "matroska" : FileType)} \"{outFile}\"";
+			var cmdLine = $"-hide_banner -safe 0 -f concat -i \"{tmpFile}\" -c:v copy {(encodeAudio && NeedEncodeAudio ? "-c:a aac" : "-c:a copy")} -f {(FileType == "mkv" ? "matroska" : FileType)} \"{outFile}\"";
 			var psi = new ProcessStartInfo(FfmpegCmd(), cmdLine)
 			{
 				RedirectStandardError  = true,
@@ -170,7 +139,7 @@ namespace VideoRecordingJoiner
 				return Task.CompletedTask;
 			}
 
-			var p  = Process.Start(psi)!;
+			var p = Process.Start(psi)!;
 			await Task.WhenAll(
 					Task.Factory.StartNew(() => HandleStreamAsync(p.StandardOutput)),
 					Task.Factory.StartNew(() => HandleStreamAsync(p.StandardError)),
@@ -183,7 +152,7 @@ namespace VideoRecordingJoiner
 							{
 								if (!p.HasExited) p.Kill();
 								p.WaitForExit();
-								Console.WriteLine($"警告：检测到错误 -> {msg}");
+								Console.WriteLine($"警告：检测到错误 -> {file}: {msg}");
 								errorMsg  = msg;
 								errorFile = file;
 							}))
@@ -191,9 +160,32 @@ namespace VideoRecordingJoiner
 				.ConfigureAwait(false);
 			File.Delete(tmpFile);
 
-			if (errorMsg == "moov_atom_not_found")
+			if (!errorFile.IsNullOrEmpty() && IgnoreErrorFile)
 			{
+				Console.WriteLine($"警告：将跳过错误文件 {errorFile} 并尝试继续合并。");
+
+				src = src.Where(s => string.Compare(s, errorFile, StringComparison.OrdinalIgnoreCase) != 0).ToArray();
+				return await CombineAsync(src, outFile, encodeAudio).ConfigureAwait(false);
+			}
+			if (TryFixMoovAtom && errorMsg == "moov_atom_not_found")
+			{
+				Untrunc.OnAtomMoovNotFound(src, errorFile);
+				Console.WriteLine($"提示：尝试自动修复错误文件 {errorFile} 。");
+
+				var (dstFile, msg) = await Untrunc.TryUntruncVideoFileAsync(errorFile).ConfigureAwait(false);
+				if (dstFile.IsNullOrEmpty())
+				{
+					Console.WriteLine($"错误：修复失败（{msg}）");
+					return false;
+				}
+				// 替换文件
+				src = src.Select(s => string.Compare(s, errorFile, StringComparison.OrdinalIgnoreCase) == 0 ? dstFile : s).ToArray()!;
+				Console.WriteLine($"提示：使用自动修复文件 {dstFile} 替换原文件进行重新合并。");
+
 				// 自动修复
+				var result = await CombineAsync(src, outFile, encodeAudio).ConfigureAwait(false);
+				File.Delete(dstFile);
+				return result;
 			}
 
 			if (p.ExitCode == 0 && new FileInfo(outFile).Length > 0) return true;
@@ -225,8 +217,11 @@ namespace VideoRecordingJoiner
 					else if ((m = Regex.Match(line, @"Impossible\sto\sopen\s['""]([^'""]+)", RegexOptions.IgnoreCase)).Success)
 						errorFile = m.GetGroupValue(1);
 
-					if (!errorFile.IsNullOrEmpty() && !errMsg.IsNullOrEmpty())
+					if (!errorFile.IsNullOrEmpty())
 					{
+						if (errMsg.IsNullOrEmpty())
+							errMsg = "FILE_OPEN_ERROR";
+
 						errorDetected?.Invoke(errMsg, errorFile);
 						break;
 					}
@@ -271,8 +266,8 @@ namespace VideoRecordingJoiner
 				return TimeSpan.Parse(str);
 			}
 
-			long     ToSize(string     str) => (long)(Regex.Match(str, @"^[\d\.]+").GetGroupValue(0).ToDouble() * 1024);
-			int      ToSpeed(string    str) => Regex.Match(str, @"^[\de\.+]+").GetGroupValue(0).ToInt32();
+			long ToSize(string  str) => (long)(Regex.Match(str, @"^[\d\.]+").GetGroupValue(0).ToDouble() * 1024);
+			int  ToSpeed(string str) => Regex.Match(str, @"^[\de\.+]+").GetGroupValue(0).ToInt32();
 
 			var sb       = new StringBuilder();
 			var isResult = false;
@@ -294,7 +289,7 @@ namespace VideoRecordingJoiner
 			}
 			if (notFirst)
 				Console.Write("\u001b[2K\r");
-			Console.Write(sb.ToString());
+			Console.WriteLine(sb.ToString());
 
 			return isResult ? 2 : 1;
 		}
@@ -333,6 +328,7 @@ namespace VideoRecordingJoiner
 				Target = Environment.CurrentDirectory;
 				Console.WriteLine("未指定输出目录，自动设定为当前目录");
 			}
+			Target = Path.GetFullPath(Target);
 			Console.WriteLine($"合并后的文件位置在：{Target}");
 			if (DeleteAfterCombine) Console.WriteLine("合并后将会删除源文件");
 			else Console.WriteLine("合并后将会重命名源文件");
@@ -345,7 +341,6 @@ namespace VideoRecordingJoiner
 				var outName = GetTargetPathName(tg.key);
 				var outFile = Path.Combine(Target, outName);
 				var tmpFile = outFile + ".tmp";
-
 
 				Console.WriteLine($"=> 初次合并，目标路径：{outFile}");
 				Console.WriteLine($"=> 包含 {tg.list.Length} 视频：");
@@ -364,8 +359,12 @@ namespace VideoRecordingJoiner
 					continue;
 				}
 
-				if (await CombineAsync(tg.list, tmpFile, true).ConfigureAwait(false))
+				var srcFullPath = tg.list.Select(Path.GetFullPath).ToArray();
+				if (await CombineAsync(srcFullPath, tmpFile, true).ConfigureAwait(false))
 				{
+					if (TryFixMoovAtom)
+						Untrunc.LogSucceedCombine(srcFullPath);
+
 					Console.WriteLine("- 合并成功！");
 
 					if (File.Exists(outFile))
@@ -389,9 +388,33 @@ namespace VideoRecordingJoiner
 						File.Move(tmpFile, outFile);
 					}
 
-					if (DeleteAfterCombine)
-						DeleteFiles(tg.list);
-					else RenameFiles(tg.list);
+					Console.WriteLine($"- 正在{(DeleteAfterCombine ? "删除" : "重命名")}源文件");
+					foreach (var file in srcFullPath)
+					{
+						try
+						{
+							if (Untrunc.IsReferencedByUntrunc(file))
+							{
+								Console.WriteLine($"  - 自动修复参考文件：{file}，暂时保留");
+								_pendingRemoveFileList.Add(file);
+							}
+							else if (DeleteAfterCombine)
+							{
+								File.Delete(file);
+								File.Delete($"  - 已删除：{file}");
+							}
+							else
+							{
+								Console.WriteLine($"  - 重命名：{file}");
+								File.Move(file, file + ".old");
+							}
+						}
+						catch (Exception e)
+						{
+							Console.WriteLine($"  - 无法操作：{file} -> {e.Message}");
+						}
+					}
+					Console.WriteLine("- 操作完成！");
 				}
 				else
 				{
@@ -399,6 +422,43 @@ namespace VideoRecordingJoiner
 					if (File.Exists(tmpFile))
 						File.Delete(tmpFile);
 				}
+				CleanUpPendingFile(false);
+			}
+
+			CleanUpPendingFile(true);
+		}
+
+		/// <summary>
+		/// 清理待清理文件
+		/// </summary>
+		/// <param name="finalCleanup"></param>
+		void CleanUpPendingFile(bool finalCleanup)
+		{
+			if (!_pendingRemoveFileList.Any())
+				return;
+
+			try
+			{
+				foreach (var file in _pendingRemoveFileList)
+				{
+					if (finalCleanup || !Untrunc.IsReferencedByUntrunc(file))
+					{
+						if (DeleteAfterCombine)
+						{
+							File.Delete(file);
+							File.Delete($"提示：已删除暂存文件 {file}");
+						}
+						else
+						{
+							Console.WriteLine($"提示：已重命名暂存文件 {file}");
+							File.Move(file, file + ".old");
+						}
+					}
+				}
+			}
+			catch (Exception e)
+			{
+				Console.WriteLine($"警告：处理暂存文件失败 -> {e.Message}");
 			}
 		}
 
