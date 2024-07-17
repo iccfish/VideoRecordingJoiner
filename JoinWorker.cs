@@ -237,7 +237,7 @@ namespace VideoRecordingJoiner
 							break;
 					}
 				}
-				else await Task.Delay(50, cancellationToken).ConfigureAwait(false);
+				else await Task.Delay(50).ConfigureAwait(false);
 			}
 			Console.WriteLine();
 		}
