@@ -143,7 +143,7 @@ namespace VideoRecordingJoiner
 			await Task.WhenAll(
 					Task.Factory.StartNew(() => HandleStreamAsync(p.StandardOutput)),
 					Task.Factory.StartNew(() => HandleStreamAsync(p.StandardError)),
-					Task.Factory.StartNew(async () => p.WaitForExitAsync().ConfigureAwait(false)),
+					Task.Factory.StartNew(() => p.WaitForExitAsync()),
 					Task.Factory.StartNew(
 						() => PrintMessagesAsync(
 							ref sp,
