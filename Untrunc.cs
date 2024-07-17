@@ -182,7 +182,7 @@ namespace VideoRecordingJoiner
 			};
 			try
 			{
-				Process.Start(psi).WaitForExit();
+				Process.Start(psi)!.WaitForExit();
 				return true;
 			}
 			catch (Exception)

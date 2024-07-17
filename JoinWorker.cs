@@ -119,14 +119,14 @@ namespace VideoRecordingJoiner
 			var    sp        = 2;
 			string errorFile = null;
 			string errorMsg  = null;
+			var    cts       = new CancellationTokenSource();
 
-			Task HandleStreamAsync(StreamReader sr)
+			async Task HandleStreamAsync(StreamReader sr)
 			{
 				string buffer;
 
-				while (!(buffer = sr.ReadLine()!).IsNullOrEmpty())
+				while (!(buffer = (await sr.ReadLineAsync().ConfigureAwait(false))!).IsNullOrEmpty())
 				{
-					Debug.WriteLine(buffer);
 					if (buffer.Contains("codec not currently supported in container"))
 					{
 						cns = true;
@@ -135,27 +135,27 @@ namespace VideoRecordingJoiner
 					mq.Enqueue(buffer);
 				}
 				Interlocked.Decrement(ref sp);
-
-				return Task.CompletedTask;
+				if (sp == 0)
+					await cts.CancelAsync().ConfigureAwait(false);
 			}
+
 
 			var p = Process.Start(psi)!;
 			await Task.WhenAll(
-					Task.Factory.StartNew(() => HandleStreamAsync(p.StandardOutput)),
-					Task.Factory.StartNew(() => HandleStreamAsync(p.StandardError)),
-					Task.Factory.StartNew(() => p.WaitForExitAsync()),
-					Task.Factory.StartNew(
-						() => PrintMessagesAsync(
-							ref sp,
-							mq,
-							(msg, file) =>
-							{
-								if (!p.HasExited) p.Kill();
-								p.WaitForExit();
-								Console.WriteLine($"警告：检测到错误 -> {file}: {msg}");
-								errorMsg  = msg;
-								errorFile = file;
-							}))
+					HandleStreamAsync(p.StandardOutput),
+					HandleStreamAsync(p.StandardError),
+					p.WaitForExitAsync(),
+					PrintMessagesAsync(
+						cts.Token,
+						mq,
+						(msg, file) =>
+						{
+							if (!p.HasExited) p.Kill();
+							p.WaitForExit();
+							Console.WriteLine($"警告：检测到错误 -> {file}: {msg}");
+							errorMsg  = msg;
+							errorFile = file;
+						})
 				)
 				.ConfigureAwait(false);
 			File.Delete(tmpFile);
@@ -201,14 +201,14 @@ namespace VideoRecordingJoiner
 			return false;
 		}
 
-		Task PrintMessagesAsync(ref int sp, ConcurrentQueue<string> q, Action<string, string> errorDetected)
+		async Task PrintMessagesAsync(CancellationToken cancellationToken, ConcurrentQueue<string> q, Action<string, string> errorDetected)
 		{
 			var    notFirst  = false;
 			string errMsg    = null;
 			string errorFile = null;
 			Match  m;
 
-			while (sp > 0)
+			while (!cancellationToken.IsCancellationRequested)
 			{
 				if (q.TryDequeue(out var line))
 				{
@@ -237,11 +237,9 @@ namespace VideoRecordingJoiner
 							break;
 					}
 				}
-				else Thread.SpinWait(100);
+				else await Task.Delay(50, cancellationToken).ConfigureAwait(false);
 			}
 			Console.WriteLine();
-
-			return Task.CompletedTask;
 		}
 
 		int TryPrintProgress(string line, bool notFirst)
