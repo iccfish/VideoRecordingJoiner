@@ -254,7 +254,7 @@ namespace VideoRecordingJoiner
 
 			TimeSpan ToTimeSpan(string str)
 			{
-				var m = Regex.Match(str, @"$(\d+):(\d+):(\d+)\.(\d+)$", RegexOptions.IgnoreCase);
+				var m = Regex.Match(str, @"^(\d+):(\d+):(\d+)\.(\d+)$", RegexOptions.IgnoreCase);
 				if (m.Success)
 				{
 					return new TimeSpan(0, m.GetGroupValue(1).ToInt32(), m.GetGroupValue(2).ToInt32(), m.GetGroupValue(3).ToInt32(), m.GetGroupValue(4).ToInt32());
