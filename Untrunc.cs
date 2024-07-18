@@ -10,12 +10,13 @@ namespace VideoRecordingJoiner
 	using System.IO.Compression;
 	using System.Net;
 	using System.Runtime.InteropServices;
+	using System.Runtime.Versioning;
 
 	using FSLib.Extension;
 
 	internal class Untrunc
 	{
-		static string _binName;
+		static string? _binName;
 
 		/// <summary>
 		/// 确认工具可用
@@ -64,7 +65,9 @@ namespace VideoRecordingJoiner
 			{
 				if (OperatingSystem.IsWindows())
 					return await DownloadWindowsPackageAsync().ConfigureAwait(false);
-				return await DownloadLinuxPackageAsync().ConfigureAwait(false);
+				if (OperatingSystem.IsLinux())
+					return await DownloadLinuxPackageAsync().ConfigureAwait(false);
+				throw new NotSupportedException("暂不支持的平台");
 			}
 			catch (Exception ex)
 			{
@@ -73,13 +76,14 @@ namespace VideoRecordingJoiner
 			}
 		}
 
+		[SupportedOSPlatform("linux")]
 		static async Task<bool> DownloadLinuxPackageAsync()
 		{
 			var targetFile = Path.Combine(Path.GetTempPath(), "untrunc.gz");
 			if (!await DownloadPackageAsync("https://alist.fishlee.net/p/bin-utils/linux-amd64/untrunc.gz", targetFile).ConfigureAwait(false))
 				return false;
 
-			var targetBin = Path.Combine(ApplicationRunTimeContext.GetProcessMainModuleDirectory(), _binName);
+			var targetBin = Path.Combine(ApplicationRunTimeContext.GetProcessMainModuleDirectory(), _binName!);
 
 			await using var fs  = File.Open(targetFile, FileMode.Open);
 			await using var gz  = new GZipStream(fs, CompressionMode.Decompress);
@@ -96,6 +100,7 @@ namespace VideoRecordingJoiner
 			return true;
 		}
 
+		[SupportedOSPlatform("windows")]
 		static async Task<bool> DownloadWindowsPackageAsync()
 		{
 			var targetFile = Path.Combine(Path.GetTempPath(), "untrunc.exe");
@@ -174,7 +179,7 @@ namespace VideoRecordingJoiner
 
 		static bool CheckExists()
 		{
-			var psi = new ProcessStartInfo(_binName, "-V")
+			var psi = new ProcessStartInfo(_binName!, "-V")
 			{
 				UseShellExecute = false,
 				CreateNoWindow  = true,
@@ -194,7 +199,7 @@ namespace VideoRecordingJoiner
 		/// <summary>
 		/// 上个已知的可用视频
 		/// </summary>
-		public static string _lastKnownWorkingVideo;
+		public static string? _lastKnownWorkingVideo;
 
 		/// <summary>
 		/// 记录修复成功列表。主要用于记录最新的参考文件。
@@ -248,13 +253,13 @@ namespace VideoRecordingJoiner
 
 			Console.WriteLine($"提示：正在尝试自动修复视频文件，错误文件：{file}，参考文件：{_lastKnownWorkingVideo}，修复后文件：{dstFile}");
 
-			var psi = new ProcessStartInfo(_binName, $"-dst \"{dstFile}\" \"{_lastKnownWorkingVideo}\" \"{file}\"")
+			var psi = new ProcessStartInfo(_binName!, $"-dst \"{dstFile}\" \"{_lastKnownWorkingVideo}\" \"{file}\"")
 			{
 				UseShellExecute = false,
 				CreateNoWindow  = true
 			};
 			var p = Process.Start(psi);
-			await p.WaitForExitAsync().ConfigureAwait(false);
+			await p!.WaitForExitAsync().ConfigureAwait(false);
 
 			if (p.ExitCode != 0)
 				return ("", $"修复进程意外退出，退出码={p.ExitCode}");

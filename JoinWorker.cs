@@ -114,12 +114,12 @@ namespace VideoRecordingJoiner
 				WindowStyle            = ProcessWindowStyle.Hidden
 			};
 			// 编码不支持
-			var    cns       = false;
-			var    mq        = new ConcurrentQueue<string>();
-			var    sp        = 2;
-			string errorFile = null;
-			string errorMsg  = null;
-			var    cts       = new CancellationTokenSource();
+			var     cns       = false;
+			var     mq        = new ConcurrentQueue<string>();
+			var     sp        = 2;
+			string? errorFile = null;
+			string? errorMsg  = null;
+			var     cts       = new CancellationTokenSource();
 
 			async Task HandleStreamAsync(StreamReader sr)
 			{
@@ -169,10 +169,10 @@ namespace VideoRecordingJoiner
 			}
 			if (TryFixMoovAtom && errorMsg == "moov_atom_not_found")
 			{
-				Untrunc.OnAtomMoovNotFound(src, errorFile);
+				Untrunc.OnAtomMoovNotFound(src, errorFile!);
 				Console.WriteLine($"提示：尝试自动修复错误文件 {errorFile} 。");
 
-				var (dstFile, msg) = await Untrunc.TryUntruncVideoFileAsync(errorFile).ConfigureAwait(false);
+				var (dstFile, msg) = await Untrunc.TryUntruncVideoFileAsync(errorFile!).ConfigureAwait(false);
 				if (dstFile.IsNullOrEmpty())
 				{
 					Console.WriteLine($"错误：修复失败（{msg}）");
@@ -184,7 +184,7 @@ namespace VideoRecordingJoiner
 
 				// 自动修复
 				var result = await CombineAsync(src, outFile, encodeAudio).ConfigureAwait(false);
-				File.Delete(dstFile);
+				File.Delete(dstFile!);
 				return result;
 			}
 
@@ -201,12 +201,12 @@ namespace VideoRecordingJoiner
 			return false;
 		}
 
-		async Task PrintMessagesAsync(CancellationToken cancellationToken, ConcurrentQueue<string> q, Action<string, string> errorDetected)
+		async Task PrintMessagesAsync(CancellationToken cancellationToken, ConcurrentQueue<string> q, Action<string?, string?> errorDetected)
 		{
-			var    notFirst  = false;
-			string errMsg    = null;
-			string errorFile = null;
-			Match  m;
+			var     notFirst  = false;
+			string? errMsg    = null;
+			string? errorFile = null;
+			Match   m;
 
 			while (!cancellationToken.IsCancellationRequested)
 			{
